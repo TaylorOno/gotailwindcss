@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -12,13 +13,21 @@ import (
 	"runtime"
 )
 
+const (
+	installDirectory = ".tailwindcss"
+)
+
+var tailwindexec = getExecName()
+
 func main() {
+	setErrorLevel()
+
 	// happy case tailwind cli installed and on the path
-	if path, err := exec.LookPath("tailwindcss"); err == nil {
+	if path, err := exec.LookPath(tailwindexec); err == nil {
 		run(path)
 		return
 	}
-	fmt.Println("tailwind not found on path")
+	slog.Info("tailwindcss not found on path, trying to download")
 
 	// look for an existing installation or download the cli
 	path, err := getTailwind()
@@ -27,7 +36,23 @@ func main() {
 		return
 	}
 
-	fmt.Printf("unable to find or download tailwind: %s\n", err)
+	slog.Error("unable to find or download tailwind", "msg", err)
+}
+
+func setErrorLevel() {
+	if _, ok := os.LookupEnv("GOTAILWINDCSS_DEBUG"); ok {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+	}
+
+	slog.SetLogLoggerLevel(slog.LevelError)
+}
+
+func getExecName() string {
+	if runtime.GOOS == "windows" {
+		return "tailwindcss.exe"
+	}
+
+	return "tailwindcss"
 }
 
 func getTailwind() (string, error) {
@@ -38,23 +63,25 @@ func getTailwind() (string, error) {
 
 	// if tailwind exists us that version
 	if tailwindExists(userHome) {
-		return filepath.Join(userHome, "bin", "tailwindcss"), nil
+		return filepath.Join(userHome, installDirectory), nil
 	}
 
 	// download the latest tailwind version to $USER_HOME/bin/tailwind
-	fmt.Printf("downloading tailwind cli to %s\n", filepath.Join(userHome, "bin", "tailwindcss"))
+	slog.Info("downloading tailwind cli", "directory", filepath.Join(userHome, installDirectory, tailwindexec))
 	return downloadTailwind(userHome)
 }
 
 func downloadTailwind(userHome string) (string, error) {
+	execDirectory := filepath.Join(userHome, installDirectory)
+
 	// create a bin directory in the user home if it does not already exist
 	if !binExists(userHome) {
-		if err := os.MkdirAll(filepath.Join(userHome, "bin"), 0755); err != nil {
+		if err := os.MkdirAll(execDirectory, 0755); err != nil {
 			return "", err
 		}
 	}
 
-	file, err := os.Create(filepath.Join(userHome, "bin", "tailwindcss"))
+	file, err := os.Create(filepath.Join(execDirectory, tailwindexec))
 	if err != nil {
 		return "", err
 	}
@@ -79,11 +106,11 @@ func downloadTailwind(userHome string) (string, error) {
 		return "", err
 	}
 
-	return file.Name(), nil
+	return execDirectory, nil
 }
 
 func tailwindExists(home string) bool {
-	if _, err := os.Stat(filepath.Join(home, "bin", "tailwindcss")); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(home, installDirectory, tailwindexec)); errors.Is(err, os.ErrNotExist) {
 		return false
 	}
 
@@ -91,7 +118,7 @@ func tailwindExists(home string) bool {
 }
 
 func binExists(home string) bool {
-	if _, err := os.Stat(filepath.Join(home, "bin")); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(home, installDirectory)); errors.Is(err, os.ErrNotExist) {
 		return false
 	}
 
@@ -100,10 +127,10 @@ func binExists(home string) bool {
 
 func run(path string) {
 	// add tailwind to the path
-	os.Setenv("PATH", path+":"+os.Getenv("PATH"))
+	os.Setenv("PATH", os.Getenv("PATH")+";"+path)
 
 	// shell out and run the tailwind cli command
-	command := exec.Command("tailwindcss", os.Args[1:]...)
+	command := exec.Command(tailwindexec, os.Args[1:]...)
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
 	if err := command.Run(); err != nil {
