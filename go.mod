@@ -1,3 +1,3 @@
-module github.com/TaylorOno/go-tailwindcss
+module github.com/TaylorOno/gotailwindcss
 
 go 1.24
