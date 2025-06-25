@@ -103,7 +103,7 @@ func run(path string) {
 	os.Setenv("PATH", path+":"+os.Getenv("PATH"))
 
 	// shell out and run the tailwind cli command
-	command := exec.Command("tailwindcss", os.Args...)
+	command := exec.Command("tailwindcss", os.Args[1:]...)
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
 	if err := command.Run(); err != nil {
