@@ -127,7 +127,12 @@ func binExists(home string) bool {
 
 func run(path string) {
 	// add tailwind to the path
-	os.Setenv("PATH", os.Getenv("PATH")+";"+path)
+
+	if runtime.GOOS == "windows" {
+		os.Setenv("PATH", path+";"+os.Getenv("PATH"))
+	} else {
+		os.Setenv("PATH", path+":"+os.Getenv("PATH"))
+	}
 
 	// shell out and run the tailwind cli command
 	command := exec.Command(tailwindexec, os.Args[1:]...)
