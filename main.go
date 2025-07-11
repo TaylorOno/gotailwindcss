@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 const (
@@ -62,7 +66,7 @@ func getTailwind() (string, error) {
 	}
 
 	// if tailwind exists us that version
-	if tailwindExists(userHome) {
+	if tailwindExists(userHome) && tailwindIsCurrent(userHome) {
 		return filepath.Join(userHome, installDirectory), nil
 	}
 
@@ -87,8 +91,8 @@ func downloadTailwind(userHome string) (string, error) {
 	}
 	defer file.Close()
 
-	operating, arch := getArch()
-	resp, err := http.DefaultClient.Get(fmt.Sprintf("https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-%s-%s", operating, arch))
+	// download the tailwind standalone cli
+	resp, err := http.DefaultClient.Get(downloadURL())
 	if err != nil {
 		return "", err
 	}
@@ -109,12 +113,73 @@ func downloadTailwind(userHome string) (string, error) {
 	return execDirectory, nil
 }
 
+// downloadURL this is either the download url for the specified version or the latest version.
+func downloadURL() string {
+	operating, arch := getArch()
+	if val, ok := os.LookupEnv("TAILWINDCSS_VERSION"); ok {
+		// specified version url
+		return fmt.Sprintf("https://github.com/tailwindlabs/tailwindcss/releases/download/%s/tailwindcss-%s-%s", val, operating, arch)
+	}
+
+	// latest version url
+	return fmt.Sprintf("https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-%s-%s", operating, arch)
+}
+
 func tailwindExists(home string) bool {
 	if _, err := os.Stat(filepath.Join(home, installDirectory, tailwindexec)); errors.Is(err, os.ErrNotExist) {
 		return false
 	}
 
 	return true
+}
+
+// tailwindIsCurrent checks the version that is available on the path to determine if an update is necessary.
+func tailwindIsCurrent(home string) bool {
+	result := &bytes.Buffer{}
+	cmd := exec.Command(filepath.Join(home, installDirectory, tailwindexec))
+	cmd.Stdout = result
+	if err := cmd.Run(); err != nil {
+		return false
+	}
+
+	line, _, err := bufio.NewReader(result).ReadLine()
+	if err != nil {
+		return false
+	}
+
+	if !strings.Contains(string(line), version()) {
+		return false
+	}
+
+	return true
+}
+
+// version returns the version from the environment variable TAILWINDCSS_VERSION or the latest release.
+func version() string {
+	if version, ok := os.LookupEnv("TAILWINDCSS_VERSION"); ok {
+		return version
+	}
+
+	resp, err := http.Get("https://api.github.com/repos/tailwindlabs/tailwindcss/tags")
+	if err != nil {
+		log.Fatal("unable to get latest version", "error", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Fatal("unable to get latest version", "status", resp.Status)
+	}
+	defer resp.Body.Close()
+
+	var result TagsResponse
+	if err = json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Fatal("unable to get latest version", "error", err)
+	}
+
+	if len(result) == 0 {
+		log.Fatal("unable to get latest version", "error", "no tags found")
+	}
+
+	return result[0].Name
 }
 
 func binExists(home string) bool {
@@ -159,4 +224,10 @@ func getArch() (string, string) {
 	}
 
 	return "windows", "x64.exe"
+}
+
+type TagsResponse []TagInfo
+
+type TagInfo struct {
+	Name string `json:"name"`
 }
